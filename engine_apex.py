@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import subprocess
 from duckduckgo_search import DDGS
 import chromadb
@@ -13,11 +14,14 @@ if not API_KEY:
     sys.exit(1)
 
 client = genai.Client(api_key=API_KEY)
-DEFAULT_MODEL = "gemini-1.5-flash"
+# استفاده از مدل‌های فعال در اکانت شما
+DEFAULT_MODEL = "gemini-2.5-flash"
+FAST_MODEL = "gemini-2.5-flash-lite"
 
-def generate_text(prompt, temperature=0.4):
+def generate_text(prompt, temperature=0.4, model_name=DEFAULT_MODEL):
+    time.sleep(2)  # رعایت سقف RPM
     response = client.models.generate_content(
-        model=DEFAULT_MODEL,
+        model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(temperature=temperature)
     )
@@ -109,7 +113,7 @@ def main():
     if not os.path.exists("problem.txt"):
         print("[!] problem.txt not found. Creating default problem.txt...")
         with open("problem.txt", "w", encoding="utf-8") as f:
-            f.write("طراحی یک معماری نرم‌افزاری مقاوم و مستقل برای پردازش داده")
+            f.write("طراحی یک معماری نرم‌افزاری توزیع‌شده با قابلیت همگام‌سازی خودکار")
 
     with open("problem.txt", "r", encoding="utf-8") as f:
         problem = f.read().strip()
@@ -120,7 +124,7 @@ def main():
     past_learnings = query_memory(memory, problem)
 
     search_prompt = f"Provide a compact 3-word query to find recent technological breakthroughs for: {problem}. Output only the 3 words."
-    sq = generate_text(search_prompt, temperature=0.2).strip().replace('"', '').replace('\n', '')
+    sq = generate_text(search_prompt, temperature=0.2, model_name=FAST_MODEL).strip().replace('"', '').replace('\n', '')
     web_data = search_web(sq)
 
     iteration = 1
@@ -143,7 +147,7 @@ def main():
             "1. Synthesize a radical, high-order, non-obvious solution.\n"
             f"2. Provide a self-contained Python script enclosed in {fence}python ... {fence} that models or tests the core quantitative claims.\n"
         )
-        alpha_res = generate_text(radical_prompt, temperature=0.8)
+        alpha_res = generate_text(radical_prompt, temperature=0.8, model_name=DEFAULT_MODEL)
 
         code_block = extract_code_block(alpha_res)
         code_report = "No code provided."
@@ -167,7 +171,7 @@ def main():
             "Score the viability from 0 to 100.\n"
             "Format:\nSCORE: <number>\nCRITIQUE: <ruthless critique>"
         )
-        beta_res = generate_text(beta_prompt, temperature=0.3)
+        beta_res = generate_text(beta_prompt, temperature=0.3, model_name=FAST_MODEL)
         score = parse_score(beta_res)
         print(f"[+] Stability Score: {score}/100")
 
@@ -196,7 +200,7 @@ def main():
         "# ۴. واکسیناسیون ریسک‌ها (پاسخ قطعی به نقدهای ویرانگر)\n"
         "# ۵. فازبندی گام‌به‌گام برای پیاده‌سازی فیزیکی\n"
     )
-    final_report = generate_text(final_prompt, temperature=0.4)
+    final_report = generate_text(final_prompt, temperature=0.4, model_name=DEFAULT_MODEL)
 
     with open("APEX_BLUEPRINT.md", "w", encoding="utf-8") as f:
         f.write(final_report)
