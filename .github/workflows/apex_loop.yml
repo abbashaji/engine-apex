@@ -1,10 +1,10 @@
-name: Apex Autonomous Engine
+name: Engine Apex Loop
 
 on:
   push:
     paths:
       - 'problem.txt'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -13,10 +13,10 @@ jobs:
   run-apex:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -24,17 +24,18 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install google-genai duckduckgo-search chromadb
+          pip install google-genai chromadb duckduckgo-search matplotlib numpy scipy
 
       - name: Run Apex Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python engine_apex.py
+        run: |
+          python engine_apex.py
 
-      - name: Commit Blueprint & Vector Memory
+      - name: Commit and Push Evolution Artifacts
         run: |
           git config --global user.name "Apex Engine"
-          git config --global user.email "engine@apex.ai"
-          git add APEX_BLUEPRINT.md .vector_memory/ || true
-          git diff-index --quiet HEAD || git commit -m "chore(apex): update blueprint and latent memory [skip ci]"
+          git config --global user.email "apex-engine@users.noreply.github.com"
+          git add APEX_BLUEPRINT.md .vector_memory/
+          git diff --staged --quiet || git commit -m "chore(apex): update blueprint and latent memory [skip ci]"
           git push
