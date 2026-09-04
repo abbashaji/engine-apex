@@ -1,214 +1,215 @@
 import os
 import sys
-import re
 import json
 import subprocess
-import traceback
 from duckduckgo_search import DDGS
 import chromadb
 import google.generativeai as genai
 
-# ۱. پیکربندی کلید API و ارتباط با جمینای
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
-print("[!] خطا: GEMINI_API_KEY در GitHub Secrets تعریف نشده است.")
-sys.exit(1)
+    print("[!] Error: GEMINI_API_KEY not found.")
+    sys.exit(1)
 
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel(
-"gemini-1.5-flash",
-generation_config={"temperature": 0.4}
+    "gemini-1.5-flash",
+    generation_config={"temperature": 0.4}
 )
 radical_model = genai.GenerativeModel(
-"gemini-1.5-flash",
-generation_config={"temperature": 0.8}
+    "gemini-1.5-flash",
+    generation_config={"temperature": 0.8}
 )
 
-# ۲. جستجوی زنده وب
 def search_web(query, max_results=4):
-print(f"[🔍] در حال کاوش زنده وب برای: {query}...")
-try:
-results = DDGS().text(query, max_results=max_results)
-if not results:
-return "داده‌ای در وب یافت نشد."
-return "\n".join([f"- {r['title']}: {r['body']}" for r in results])
-except Exception as e:
-return f"عدم امکان جستجو: {str(e)}"
+    print(f"[+] Searching web for: {query}")
+    try:
+        results = DDGS().text(query, max_results=max_results)
+        if not results:
+            return "No web data found."
+        lines = []
+        for r in results:
+            t = r.get("title", "")
+            b = r.get("body", "")
+            lines.append(f"- {t}: {b}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Search error: {e}"
 
-# ۳. حافظه برداری محلی (ChromaDB)
 def setup_memory():
-client = chromadb.PersistentClient(path="./.vector_memory")
-collection = client.get_or_create_collection(name="apex_knowledge")
-return collection
+    client = chromadb.PersistentClient(path="./.vector_memory")
+    collection = client.get_or_create_collection(name="apex_knowledge")
+    return collection
 
 def query_memory(collection, text, n_results=2):
-try:
-count = collection.count()
-if count == 0:
-return "حافظه قبلی خالی است (اولین اجرا)."
-res = collection.query(query_texts=[text], n_results=min(n_results, count))
-return "\n".join(res['documents'][0]) if res['documents'] else "یافته‌ای نبود."
-except Exception:
-return "خطا در بازیابی از حافظه برداری."
+    try:
+        count = collection.count()
+        if count == 0:
+            return "Initial run: memory is empty."
+        res = collection.query(query_texts=[text], n_results=min(n_results, count))
+        if res and res.get("documents") and res["documents"][0]:
+            return "\n".join(res["documents"][0])
+        return "No relevant past entries."
+    except Exception as e:
+        return f"Memory error: {e}"
 
-# ۴. جعبه‌شنی اجرای کد (Execution Sandbox)
 def run_python_code(code_str):
-test_file = "_sandbox_test.py"
-with open(test_file, "w", encoding="utf-8") as f:
-f.write(code_str)
-try:
-res = subprocess.run(
-[sys.executable, test_file],
-capture_output=True,
-text=True,
-timeout=15
-)
-if os.path.exists(test_file):
-os.remove(test_file)
-if res.returncode == 0:
-return True, res.stdout.strip()
-else:
-return False, res.stderr.strip()
-except subprocess.TimeoutExpired:
-if os.path.exists(test_file):
-os.remove(test_file)
-return False, "توقف اجرا: زمان بیش از حد مجاز (Timeout)."
-except Exception as e:
-if os.path.exists(test_file):
-os.remove(test_file)
-return False, str(e)
+    test_file = "_sandbox_test.py"
+    with open(test_file, "w", encoding="utf-8") as f:
+        f.write(code_str)
+    try:
+        res = subprocess.run(
+            [sys.executable, test_file],
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        if res.returncode == 0:
+            return True, res.stdout.strip()
+        else:
+            return False, res.stderr.strip()
+    except subprocess.TimeoutExpired:
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        return False, "Execution timeout (>15s)."
+    except Exception as e:
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        return False, str(e)
 
-# ۵. استخراج کد با Regex بدون باگ استرینگ
 def extract_code_block(text):
-match = re.search(r"
-```(?:python)?\s*(.*?)\s*
-```", text, re.DOTALL)
-if match:
-return match.group(1).strip()
-return ""
+    tag = chr(96) * 3
+    if tag not in text:
+        return ""
+    parts = text.split(tag)
+    if len(parts) >= 3:
+        code_section = parts[1]
+        lines = code_section.split("\n")
+        if lines and lines[0].strip().lower().startswith("python"):
+            return "\n".join(lines[1:]).strip()
+        return code_section.strip()
+    return ""
+
+def parse_score(text):
+    for line in text.split("\n"):
+        if "SCORE:" in line:
+            clean = "".join([c for c in line if c.isdigit()])
+            if clean:
+                try:
+                    return int(clean)
+                except ValueError:
+                    pass
+    return 70
 
 def main():
-if not os.path.exists("problem.txt"):
-print("[!] فایل problem.txt یافت نشد.")
-return
+    if not os.path.exists("problem.txt"):
+        print("[!] problem.txt not found.")
+        return
 
-with open("problem.txt", "r", encoding="utf-8") as f:
-problem = f.read().strip()
+    with open("problem.txt", "r", encoding="utf-8") as f:
+        problem = f.read().strip()
 
-print(f"\n[🚀] شروع چرخه سرحد مطلق برای مسئله:\n>>> {problem}\n")
+    print(f"\n[+] Processing problem:\n{problem}\n")
 
-# فاز ۱: حافظه
-memory = setup_memory()
-past_learnings = query_memory(memory, problem)
+    memory = setup_memory()
+    past_learnings = query_memory(memory, problem)
 
-# فاز ۲: کاوش وب
-search_prompt = f"Produce a compact 3-word web search query to find recent technological or scientific breakthroughs about: {problem}. Return ONLY the query."
-sq = model.generate_content(search_prompt).text.strip().replace('"', '').replace('\n', '')
-web_data = search_web(sq)
+    search_prompt = f"Provide a compact 3-word query to find recent technological breakthroughs for: {problem}. Output only the 3 words."
+    sq = model.generate_content(search_prompt).text.strip().replace('"', '').replace('\n', '')
+    web_data = search_web(sq)
 
-# فاز ۳: چرخه تکاملی خوداصلاح‌گر
-iteration = 1
-max_iterations = 3
-converged = False
-current_solution = ""
-critique_history = []
+    iteration = 1
+    max_iterations = 3
+    converged = False
+    current_solution = ""
+    critique_history = []
 
-while iteration <= max_iterations and not converged:
-print(f"\n═══════════════════════════════════════════════")
-print(f"[*] دور تکاملی {iteration}/{max_iterations}")
-print(f"═══════════════════════════════════════════════")
+    fence = chr(96) * 3
 
-radical_prompt = (
-"You are AGENT ALPHA (Radical Transmorphic Architect).\n"
-f"Problem: {problem}\n"
-f"Past Insights: {past_learnings}\n"
-f"Web Grounding: {web_data}\n"
-f"Previous Feedback: {json.dumps(critique_history, ensure_ascii=False)}\n\n"
-"TASK:\n"
-"1. Synthesize a radical, high-order, non-obvious solution.\n"
-"2. Provide a self-contained Python script inside standard python code fences that models or tests the mathematical/computational core of this solution.\n"
-)
-alpha_res = radical_model.generate_content(radical_prompt).text
+    while iteration <= max_iterations and not converged:
+        print(f"\n--- Iteration {iteration}/{max_iterations} ---")
 
-# استخراج و آزمایش کد
-code_block = extract_code_block(alpha_res)
-code_report = "بدون کد ارائه‌شده."
-if code_block:
-print("[⚙️] اجرای شبیه‌سازی و تست کد در محیط سیستم‌عامل...")
-success, output = run_python_code(code_block)
-if success:
-code_report = f"موفقیت‌آمیز:\n{output}"
-print(f"[✓] خروجی شبیه‌سازی:\n{output}")
-else:
-code_report = f"خطا در اعتبارسنجی فرضیه:\n{output}"
-print(f"[✗] خطای محاسباتی:\n{output}")
+        radical_prompt = (
+            "You are AGENT ALPHA (Radical Transmorphic Architect).\n"
+            f"Problem: {problem}\n"
+            f"Memory Insights: {past_learnings}\n"
+            f"Web Grounding: {web_data}\n"
+            f"Critique History: {json.dumps(critique_history, ensure_ascii=False)}\n\n"
+            "TASK:\n"
+            "1. Synthesize a radical, high-order, non-obvious solution.\n"
+            f"2. Provide a self-contained Python script enclosed in {fence}python ... {fence} that models or tests the core quantitative claims.\n"
+        )
+        alpha_res = radical_model.generate_content(radical_prompt).text
 
-# نقد بدبینانه
-beta_prompt = (
-"You are AGENT BETA (Nihilistic Adversary).\n"
-f"Problem: {problem}\n"
-f"Proposed Solution: {alpha_res}\n"
-f"Code Sandbox Results: {code_report}\n\n"
-"TASK:\n"
-"Brutally dismantle this idea. Expose all operational bottlenecks, thermodynamic impossibilities, and economic flaws.\n"
-"Rate it from 0 to 100.\n"
-"Format:\nSCORE: <number>\nCRITIQUE: <ruthless critique>"
-)
-beta_res = model.generate_content(beta_prompt).text
+        code_block = extract_code_block(alpha_res)
+        code_report = "No code provided."
+        if code_block:
+            print("[+] Running simulation code in sandbox...")
+            success, output = run_python_code(code_block)
+            if success:
+                code_report = f"Success:\n{output}"
+                print(f"[✓] Code Output:\n{output}")
+            else:
+                code_report = f"Execution Error:\n{output}"
+                print(f"[✗] Code Error:\n{output}")
 
-score = 70
-for line in beta_res.split("\n"):
-if "SCORE:" in line:
-digits = re.findall(r"\d+", line)
-if digits:
-score = int(digits[0])
-break
+        beta_prompt = (
+            "You are AGENT BETA (Nihilistic Adversary).\n"
+            f"Problem: {problem}\n"
+            f"Proposed Solution: {alpha_res}\n"
+            f"Sandbox Output: {code_report}\n\n"
+            "TASK:\n"
+            "Brutally critique this solution. Point out operational bottlenecks, thermodynamic impossibilities, and economic flaws.\n"
+            "Score the viability from 0 to 100.\n"
+            "Format:\nSCORE: <number>\nCRITIQUE: <ruthless critique>"
+        )
+        beta_res = model.generate_content(beta_prompt).text
+        score = parse_score(beta_res)
+        print(f"[+] Stability Score: {score}/100")
 
-print(f"[📊] نمره پایداری در دور {iteration}: {score}/100")
+        if score >= 90 or iteration == max_iterations:
+            converged = True
+            current_solution = alpha_res
+            critique_history.append({"iteration": iteration, "score": score, "critique": beta_res, "code_status": code_report})
+            print("[+] Target convergence reached.")
+            break
+        else:
+            critique_history.append({"iteration": iteration, "score": score, "critique": beta_res, "code_status": code_report})
+            iteration += 1
 
-if score >= 90 or iteration == max_iterations:
-converged = True
-current_solution = alpha_res
-critique_history.append({"iteration": iteration, "score": score, "critique": beta_res, "code_status": code_report})
-print("[★] سیستم به سطح پایداری و بلوغ رسید.")
-break
-else:
-critique_history.append({"iteration": iteration, "score": score, "critique": beta_res, "code_status": code_report})
-iteration += 1
+    print("\n[+] Synthesizing Final Blueprint...")
+    final_prompt = (
+        "You are THE SUPREME COGNITIVE ARCHITECT.\n"
+        f"Problem: {problem}\n"
+        f"Evolutionary Journey: {json.dumps(critique_history, ensure_ascii=False)}\n"
+        f"Final Refined Thesis: {current_solution}\n\n"
+        "TASK:\n"
+        "Produce an authoritative, deeply structured operational blueprint in Persian (Markdown).\n"
+        "Include sections:\n"
+        "# ۱. معماری و استراتژی نامتقارن\n"
+        "# ۲. بینش‌های تجربی استخراج‌شده از کاوش وب\n"
+        "# ۳. اعتبارسنجی محاسباتی و نتایج شبیه‌سازی کد پایتون\n"
+        "# ۴. واکسیناسیون ریسک‌ها (پاسخ قطعی به نقدهای ویرانگر)\n"
+        "# ۵. فازبندی گام‌به‌گام برای پیاده‌سازی فیزیکی\n"
+    )
+    final_report = model.generate_content(final_prompt).text
 
-# فاز ۴: سنتز معماری نهایی
-print("\n[*] در حال تدوین نقشه راه نهایی (Dialectical Blueprint)...")
-final_prompt = (
-"You are THE SUPREME COGNITIVE ARCHITECT.\n"
-f"Problem: {problem}\n"
-f"Evolutionary Journey: {json.dumps(critique_history, ensure_ascii=False)}\n"
-f"Final Refined Thesis: {current_solution}\n\n"
-"TASK:\n"
-"Produce an authoritative, deeply structured operational blueprint in Persian (Markdown).\n"
-"Include sections:\n"
-"# ۱. معماری و استراتژی نامتقارن\n"
-"# ۲. بینش‌های تجربی استخراج‌شده از کاوش وب\n"
-"# ۳. اعتبارسنجی محاسباتی و نتایج شبیه‌سازی کد پایتون\n"
-"# ۴. واکسیناسیون ریسک‌ها (پاسخ قطعی به نقدهای ویرانگر)\n"
-"# ۵. فازبندی گام‌به‌گام برای پیاده‌سازی فیزیکی\n"
-)
-final_report = model.generate_content(final_prompt).text
+    with open("APEX_BLUEPRINT.md", "w", encoding="utf-8") as f:
+        f.write(final_report)
 
-# فاز ۵: ثبت در فایل و پایگاه دانش برداری
-with open("APEX_BLUEPRINT.md", "w", encoding="utf-8") as f:
-f.write(final_report)
+    try:
+        run_id = os.environ.get("GITHUB_RUN_ID", "local")
+        memory.add(
+            documents=[f"Problem: {problem} | Insights: {final_report[:500]}"],
+            metadatas=[{"score": score}],
+            ids=[f"run_{run_id}"]
+        )
+    except Exception as e:
+        print(f"[!] Memory update skipped: {e}")
 
-try:
-run_id = os.environ.get("GITHUB_RUN_ID", "local")
-memory.add(
-documents=[f"Problem: {problem} | Key Insights: {final_report[:600]}"],
-metadatas=[{"score": score}],
-ids=[f"run_{run_id}"]
-)
-except Exception as e:
-print(f"[!] نادیده گرفتن خطای جزئی ذخیره برداری: {e}")
-
-print("\n[✓] عملیات با موفقیت به پایان رسید. سند APEX_BLUEPRINT.md ایجاد شد.")
+    print("\n[✓] Finished successfully. Output saved to APEX_BLUEPRINT.md")
 
 if __name__ == "__main__":
-main()
+    main()
