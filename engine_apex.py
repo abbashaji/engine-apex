@@ -4,22 +4,24 @@ import json
 import subprocess
 from duckduckgo_search import DDGS
 import chromadb
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     print("[!] Error: GEMINI_API_KEY not found.")
     sys.exit(1)
 
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel(
-    "gemini-1.5-flash",
-    generation_config={"temperature": 0.4}
-)
-radical_model = genai.GenerativeModel(
-    "gemini-1.5-flash",
-    generation_config={"temperature": 0.8}
-)
+client = genai.Client(api_key=API_KEY)
+DEFAULT_MODEL = "gemini-1.5-flash"
+
+def generate_text(prompt, temperature=0.4):
+    response = client.models.generate_content(
+        model=DEFAULT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=temperature)
+    )
+    return response.text or ""
 
 def search_web(query, max_results=4):
     print(f"[+] Searching web for: {query}")
@@ -37,8 +39,8 @@ def search_web(query, max_results=4):
         return f"Search error: {e}"
 
 def setup_memory():
-    client = chromadb.PersistentClient(path="./.vector_memory")
-    collection = client.get_or_create_collection(name="apex_knowledge")
+    chroma_client = chromadb.PersistentClient(path="./.vector_memory")
+    collection = chroma_client.get_or_create_collection(name="apex_knowledge")
     return collection
 
 def query_memory(collection, text, n_results=2):
@@ -105,8 +107,9 @@ def parse_score(text):
 
 def main():
     if not os.path.exists("problem.txt"):
-        print("[!] problem.txt not found.")
-        return
+        print("[!] problem.txt not found. Creating default problem.txt...")
+        with open("problem.txt", "w", encoding="utf-8") as f:
+            f.write("طراحی یک معماری نرم‌افزاری مقاوم و مستقل برای پردازش داده")
 
     with open("problem.txt", "r", encoding="utf-8") as f:
         problem = f.read().strip()
@@ -117,7 +120,7 @@ def main():
     past_learnings = query_memory(memory, problem)
 
     search_prompt = f"Provide a compact 3-word query to find recent technological breakthroughs for: {problem}. Output only the 3 words."
-    sq = model.generate_content(search_prompt).text.strip().replace('"', '').replace('\n', '')
+    sq = generate_text(search_prompt, temperature=0.2).strip().replace('"', '').replace('\n', '')
     web_data = search_web(sq)
 
     iteration = 1
@@ -125,7 +128,6 @@ def main():
     converged = False
     current_solution = ""
     critique_history = []
-
     fence = chr(96) * 3
 
     while iteration <= max_iterations and not converged:
@@ -141,7 +143,7 @@ def main():
             "1. Synthesize a radical, high-order, non-obvious solution.\n"
             f"2. Provide a self-contained Python script enclosed in {fence}python ... {fence} that models or tests the core quantitative claims.\n"
         )
-        alpha_res = radical_model.generate_content(radical_prompt).text
+        alpha_res = generate_text(radical_prompt, temperature=0.8)
 
         code_block = extract_code_block(alpha_res)
         code_report = "No code provided."
@@ -165,7 +167,7 @@ def main():
             "Score the viability from 0 to 100.\n"
             "Format:\nSCORE: <number>\nCRITIQUE: <ruthless critique>"
         )
-        beta_res = model.generate_content(beta_prompt).text
+        beta_res = generate_text(beta_prompt, temperature=0.3)
         score = parse_score(beta_res)
         print(f"[+] Stability Score: {score}/100")
 
@@ -194,7 +196,7 @@ def main():
         "# ۴. واکسیناسیون ریسک‌ها (پاسخ قطعی به نقدهای ویرانگر)\n"
         "# ۵. فازبندی گام‌به‌گام برای پیاده‌سازی فیزیکی\n"
     )
-    final_report = model.generate_content(final_prompt).text
+    final_report = generate_text(final_prompt, temperature=0.4)
 
     with open("APEX_BLUEPRINT.md", "w", encoding="utf-8") as f:
         f.write(final_report)
