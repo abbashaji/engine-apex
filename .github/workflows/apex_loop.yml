@@ -1,18 +1,17 @@
-name: Apex Autonomous Cognitive Loop
+name: Apex Autonomous Engine
 
 on:
   push:
     paths:
-      - "problem.txt"
-  workflow_dispatch: {}
+      - 'problem.txt'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  run-apex-system:
+  run-apex:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,23 +19,22 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install google-generativeai chromadb duckduckgo-search numpy scipy sympy
+          pip install google-genai duckduckgo-search chromadb
 
       - name: Run Apex Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-        run: |
-          python engine_apex.py
+        run: python engine_apex.py
 
-      - name: Commit and push report and memory
+      - name: Commit Blueprint & Vector Memory
         run: |
           git config --global user.name "Apex Engine"
-          git config --global user.email "apex-bot@github.com"
+          git config --global user.email "engine@apex.ai"
           git add APEX_BLUEPRINT.md .vector_memory/ || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-evolved Apex Blueprint [skip ci]" && git push)
+          git diff-index --quiet HEAD || git commit -m "chore(apex): update blueprint and latent memory [skip ci]"
+          git push
