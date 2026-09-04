@@ -14,12 +14,11 @@ if not API_KEY:
     sys.exit(1)
 
 client = genai.Client(api_key=API_KEY)
-# استفاده از مدل‌های فعال در اکانت شما
 DEFAULT_MODEL = "gemini-2.5-flash"
 FAST_MODEL = "gemini-2.5-flash-lite"
 
 def generate_text(prompt, temperature=0.4, model_name=DEFAULT_MODEL):
-    time.sleep(2)  # رعایت سقف RPM
+    time.sleep(2)
     response = client.models.generate_content(
         model=model_name,
         contents=prompt,
@@ -68,7 +67,7 @@ def run_python_code(code_str):
             [sys.executable, test_file],
             capture_output=True,
             text=True,
-            timeout=15
+            timeout=20
         )
         if os.path.exists(test_file):
             os.remove(test_file)
@@ -79,7 +78,7 @@ def run_python_code(code_str):
     except subprocess.TimeoutExpired:
         if os.path.exists(test_file):
             os.remove(test_file)
-        return False, "Execution timeout (>15s)."
+        return False, "Execution timeout (>20s)."
     except Exception as e:
         if os.path.exists(test_file):
             os.remove(test_file)
@@ -145,7 +144,8 @@ def main():
             f"Critique History: {json.dumps(critique_history, ensure_ascii=False)}\n\n"
             "TASK:\n"
             "1. Synthesize a radical, high-order, non-obvious solution.\n"
-            f"2. Provide a self-contained Python script enclosed in {fence}python ... {fence} that models or tests the core quantitative claims.\n"
+            f"2. Provide a self-contained Python script enclosed in {fence}python ... {fence} that mathematically or quantitatively validates the claims.\n"
+            "IMPORTANT FOR SCRIPT: Print all quantitative output directly to stdout using print(). Do NOT call plt.show() (headless environment)."
         )
         alpha_res = generate_text(radical_prompt, temperature=0.8, model_name=DEFAULT_MODEL)
 
